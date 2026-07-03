@@ -91,6 +91,7 @@ public class UpperArmToUrdfRobotJoints : MonoBehaviour
     private float rawPitch;
     private float rawElbow;
     private float rawForearmYaw;
+    private float rawForearmWorldYaw;
     private float rawHandPitch;
     private float rawHandRoll;
     private float previousRawYaw;
@@ -134,6 +135,7 @@ public class UpperArmToUrdfRobotJoints : MonoBehaviour
     public float RawPitch => rawPitch;
     public float RawElbow => rawElbow;
     public float RawForearmYaw => rawForearmYaw;
+    public float RawForearmWorldYaw => rawForearmWorldYaw;
     public float RawHandPitch => rawHandPitch;
     public float RawHandRoll => rawHandRoll;
     public float DeltaYaw => deltaYaw;
@@ -270,20 +272,26 @@ public class UpperArmToUrdfRobotJoints : MonoBehaviour
 
         forearmDir.Normalize();
 
-        rawElbow = Vector3.Angle(armDir, forearmDir);
-
         float forearmHorizontalLength = new Vector2(forearmDir.x, forearmDir.z).magnitude;
         if (forearmHorizontalLength > yawUpdateThreshold)
         {
-            rawForearmYaw = Mathf.Atan2(forearmDir.x, forearmDir.z) * Mathf.Rad2Deg;
-            previousRawForearmYaw = rawForearmYaw;
+            rawForearmWorldYaw = Mathf.Atan2(forearmDir.x, forearmDir.z) * Mathf.Rad2Deg;
+            previousRawForearmYaw = rawForearmWorldYaw;
         }
         else
         {
-            rawForearmYaw = previousRawForearmYaw;
+            rawForearmWorldYaw = previousRawForearmYaw;
         }
 
-        Vector3 handEuler = rightHand.rotation.eulerAngles;
+        Vector3 yawForward = Quaternion.AngleAxis(rawYaw, Vector3.up) * Vector3.forward;
+        Vector3 yawRight = Vector3.Cross(Vector3.up, yawForward).normalized;
+        Vector3 planarArmDir = ProjectDirectionOnPlane(armDir, yawRight, armDir);
+        Vector3 planarForearmDir = ProjectDirectionOnPlane(forearmDir, yawRight, forearmDir);
+        rawElbow = Vector3.SignedAngle(planarArmDir, planarForearmDir, yawRight);
+        rawForearmYaw = Mathf.DeltaAngle(rawYaw, rawForearmWorldYaw);
+
+        Quaternion forearmYawFrame = Quaternion.AngleAxis(rawForearmWorldYaw, Vector3.up);
+        Vector3 handEuler = (Quaternion.Inverse(forearmYawFrame) * rightHand.rotation).eulerAngles;
         rawHandPitch = NormalizeAngle(handEuler.x);
         rawHandRoll = NormalizeAngle(handEuler.z);
     }
@@ -427,6 +435,17 @@ public class UpperArmToUrdfRobotJoints : MonoBehaviour
     private float NormalizeAngle(float angle)
     {
         return Mathf.DeltaAngle(0f, angle);
+    }
+
+    private Vector3 ProjectDirectionOnPlane(Vector3 direction, Vector3 planeNormal, Vector3 fallback)
+    {
+        Vector3 projected = Vector3.ProjectOnPlane(direction, planeNormal);
+        if (projected.sqrMagnitude <= Mathf.Epsilon)
+        {
+            return fallback.normalized;
+        }
+
+        return projected.normalized;
     }
 
     [ContextMenu("Calibrate Upper Arm")]

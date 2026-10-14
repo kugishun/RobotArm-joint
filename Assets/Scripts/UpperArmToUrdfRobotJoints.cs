@@ -3,7 +3,8 @@ using UnityEngine;
 
 /// <summary>
 /// This script maps Humanoid right-arm motion to a URDF robot arm inside Unity.
-/// UDP communication and real robot control are intentionally separated into a later phase.
+/// This is a feature-to-joint mapping, not anatomical joint reconstruction or IK.
+/// UDP communication is handled by MyCobotUdpJointSender.
 /// </summary>
 public class UpperArmToUrdfRobotJoints : MonoBehaviour
 {
@@ -62,6 +63,7 @@ public class UpperArmToUrdfRobotJoints : MonoBehaviour
 
     [Header("Stability")]
     [SerializeField] private float yawUpdateThreshold = 0.1f;
+    [Tooltip("Interpolation per 1/60 second. Converted using deltaTime for frame-rate independence.")]
     [SerializeField, Range(0f, 1f)] private float smoothing = 0.2f;
 
     [Header("Articulation Drive")]
@@ -123,6 +125,8 @@ public class UpperArmToUrdfRobotJoints : MonoBehaviour
     private float lastDebugLogTime;
     private bool isCalibrated;
     private bool hasValidBones;
+    private bool hasValidPose;
+    private bool hasAppliedTargets;
     private readonly bool[] warnedJoints = new bool[6];
 
     public float SmoothedJ1 => smoothedJ1;
@@ -147,6 +151,42 @@ public class UpperArmToUrdfRobotJoints : MonoBehaviour
     public Vector3 ArmDirection => armDir;
     public Vector3 ForearmDirection => forearmDir;
     public bool IsCalibrated => isCalibrated;
+    public Animator HumanoidAnimator => humanoidAnimator;
+    public ArticulationBody[] RobotChain => new[] { joint1, joint2, joint3, joint4, joint5, joint6 };
+    // Calibration output after the same mapping/drive limits used by A, without moving joints.
+    public bool TryGetCalibrationTargets(out float[] pose)
+    {
+        pose = new[] { robotBaseJ1 + j1Offset, robotBaseJ2 + j2Offset, robotBaseJ3 + j3Offset,
+            robotBaseJ4 + j4Offset, robotBaseJ5 + j5Offset, robotBaseJ6 + j6Offset };
+        var chain = RobotChain;
+        for (int i = 0; i < 6; i++)
+        {
+            var joint = chain[i];
+            if (joint == null || joint.jointType != ArticulationJointType.RevoluteJoint ||
+                joint.twistLock == ArticulationDofLock.LockedMotion) return false;
+            float min = GetMappingMin(i), max = GetMappingMax(i);
+            if (joint.twistLock == ArticulationDofLock.LimitedMotion)
+            {
+                var drive = joint.xDrive;
+                if (!IsFinite(drive.lowerLimit) || !IsFinite(drive.upperLimit)) return false;
+                min = Mathf.Max(min, drive.lowerLimit);
+                max = Mathf.Min(max, drive.upperLimit);
+            }
+            if (!IsFinite(pose[i]) || !IsFinite(min) || !IsFinite(max) || min > max) return false;
+            pose[i] = Mathf.Clamp(pose[i], min, max);
+        }
+        return true;
+    }
+
+    public void PrepareForSelection()
+    {
+        StopAllCoroutines();
+        autoCalibrateOnStart = false;
+        isCalibrated = false;
+        hasAppliedTargets = false;
+    }
+    // Pose validity does not indicate fresh mocopi packets; reception timeout is a separate concern.
+    public bool CanSendJointTargets => isActiveAndEnabled && isCalibrated && hasValidPose && hasAppliedTargets;
 
     private void Awake()
     {
@@ -183,27 +223,34 @@ public class UpperArmToUrdfRobotJoints : MonoBehaviour
         }
     }
 
-    private void Update()
+    private void LateUpdate()
     {
+        hasAppliedTargets = false;
         if (!hasValidBones)
         {
             return;
         }
 
-        UpdateArmAngles();
+        hasValidPose = UpdateArmAngles();
+        if (!hasValidPose)
+        {
+            return;
+        }
 
         if (!isCalibrated && driveOnlyAfterCalibration)
         {
             return;
         }
 
-        UpdateRobotAngles();
-        SetJointTarget(joint1, smoothedJ1);
-        SetJointTarget(joint2, smoothedJ2);
-        SetJointTarget(joint3, smoothedJ3);
-        SetJointTarget(joint4, smoothedJ4);
-        SetJointTarget(joint5, smoothedJ5);
-        SetJointTarget(joint6, smoothedJ6);
+        UpdateRobotAngles(Time.deltaTime);
+        // Export exactly the targets applied to the simulation, including drive limits.
+        bool applied = SetJointTarget(joint1, ref smoothedJ1);
+        applied &= SetJointTarget(joint2, ref smoothedJ2);
+        applied &= SetJointTarget(joint3, ref smoothedJ3);
+        applied &= SetJointTarget(joint4, ref smoothedJ4);
+        applied &= SetJointTarget(joint5, ref smoothedJ5);
+        applied &= SetJointTarget(joint6, ref smoothedJ6);
+        hasAppliedTargets = applied;
         WriteDebugLogIfNeeded();
     }
 
@@ -237,18 +284,29 @@ public class UpperArmToUrdfRobotJoints : MonoBehaviour
     private IEnumerator AutoCalibrateAfterDelay()
     {
         yield return new WaitForSeconds(autoCalibrateDelay);
-        UpdateArmAngles();
         Calibrate();
     }
 
-    private void UpdateArmAngles()
+    private bool UpdateArmAngles()
     {
-        armDir = lowerArm.position - upperArm.position;
-        if (armDir.sqrMagnitude <= Mathf.Epsilon)
+        if (upperArm == null || lowerArm == null || rightHand == null)
         {
-            return;
+            return false;
         }
 
+        Vector3 nextArmDir = lowerArm.position - upperArm.position;
+        Vector3 nextForearmDir = rightHand.position - lowerArm.position;
+        Quaternion handRotation = rightHand.rotation;
+        if (!IsFinite(nextArmDir) || !IsFinite(nextForearmDir) ||
+            nextArmDir.sqrMagnitude <= Mathf.Epsilon || nextForearmDir.sqrMagnitude <= Mathf.Epsilon ||
+            !IsFinite(handRotation.x) || !IsFinite(handRotation.y) ||
+            !IsFinite(handRotation.z) || !IsFinite(handRotation.w))
+        {
+            return false;
+        }
+
+        // Validate the whole pose before updating any features.
+        armDir = nextArmDir;
         armDir.Normalize();
 
         float horizontalLength = new Vector2(armDir.x, armDir.z).magnitude;
@@ -264,12 +322,7 @@ public class UpperArmToUrdfRobotJoints : MonoBehaviour
 
         rawPitch = Mathf.Atan2(armDir.y, horizontalLength) * Mathf.Rad2Deg;
 
-        forearmDir = rightHand.position - lowerArm.position;
-        if (forearmDir.sqrMagnitude <= Mathf.Epsilon)
-        {
-            return;
-        }
-
+        forearmDir = nextForearmDir;
         forearmDir.Normalize();
 
         float forearmHorizontalLength = new Vector2(forearmDir.x, forearmDir.z).magnitude;
@@ -291,16 +344,17 @@ public class UpperArmToUrdfRobotJoints : MonoBehaviour
         rawForearmYaw = Mathf.DeltaAngle(rawYaw, rawForearmWorldYaw);
 
         Quaternion forearmYawFrame = Quaternion.AngleAxis(rawForearmWorldYaw, Vector3.up);
-        Vector3 handEuler = (Quaternion.Inverse(forearmYawFrame) * rightHand.rotation).eulerAngles;
+        Vector3 handEuler = (Quaternion.Inverse(forearmYawFrame) * handRotation).eulerAngles;
         rawHandPitch = NormalizeAngle(handEuler.x);
         rawHandRoll = NormalizeAngle(handEuler.z);
+        return true;
     }
 
-    private void UpdateRobotAngles()
+    private void UpdateRobotAngles(float deltaTime)
     {
         deltaYaw = Mathf.DeltaAngle(baseYaw, rawYaw);
         deltaPitch = rawPitch - basePitch;
-        deltaElbow = rawElbow - baseElbow;
+        deltaElbow = Mathf.DeltaAngle(baseElbow, rawElbow);
         deltaForearmYaw = Mathf.DeltaAngle(baseForearmYaw, rawForearmYaw);
         deltaHandPitch = Mathf.DeltaAngle(baseHandPitch, rawHandPitch);
         deltaHandRoll = Mathf.DeltaAngle(baseHandRoll, rawHandRoll);
@@ -326,28 +380,34 @@ public class UpperArmToUrdfRobotJoints : MonoBehaviour
         robotJ5 = Mathf.Clamp(robotJ5, j5Min, j5Max);
         robotJ6 = Mathf.Clamp(robotJ6, j6Min, j6Max);
 
-        smoothedJ1 = Mathf.Lerp(smoothedJ1, robotJ1, smoothing);
-        smoothedJ2 = Mathf.Lerp(smoothedJ2, robotJ2, smoothing);
-        smoothedJ3 = Mathf.Lerp(smoothedJ3, robotJ3, smoothing);
-        smoothedJ4 = Mathf.Lerp(smoothedJ4, robotJ4, smoothing);
-        smoothedJ5 = Mathf.Lerp(smoothedJ5, robotJ5, smoothing);
-        smoothedJ6 = Mathf.Lerp(smoothedJ6, robotJ6, smoothing);
+        float alpha = deltaTime <= 0f ? 0f : 1f - Mathf.Pow(1f - Mathf.Clamp01(smoothing), 60f * deltaTime);
+        smoothedJ1 = Mathf.Lerp(smoothedJ1, robotJ1, alpha);
+        smoothedJ2 = Mathf.Lerp(smoothedJ2, robotJ2, alpha);
+        smoothedJ3 = Mathf.Lerp(smoothedJ3, robotJ3, alpha);
+        smoothedJ4 = Mathf.Lerp(smoothedJ4, robotJ4, alpha);
+        smoothedJ5 = Mathf.Lerp(smoothedJ5, robotJ5, alpha);
+        smoothedJ6 = Mathf.Lerp(smoothedJ6, robotJ6, alpha);
     }
 
-    private void SetJointTarget(ArticulationBody joint, float targetDeg)
+    private bool SetJointTarget(ArticulationBody joint, ref float targetDeg)
     {
         if (joint == null)
         {
-            return;
+            return false;
         }
 
-        if (joint.jointType != ArticulationJointType.RevoluteJoint && joint.jointType != ArticulationJointType.PrismaticJoint)
+        // These commands are degrees. Prismatic drives use distance, so must be rejected.
+        if (joint.jointType != ArticulationJointType.RevoluteJoint)
         {
             WarnOnceForJoint(joint);
-            return;
+            return false;
         }
 
         ArticulationDrive drive = joint.xDrive;
+        if (!IsFinite(targetDeg) || !IsFinite(drive.lowerLimit) || !IsFinite(drive.upperLimit))
+        {
+            return false;
+        }
         if (applyDriveSettings)
         {
             drive.stiffness = driveStiffness;
@@ -355,13 +415,65 @@ public class UpperArmToUrdfRobotJoints : MonoBehaviour
             drive.forceLimit = driveForceLimit;
         }
 
-        if (drive.lowerLimit < drive.upperLimit)
+        if (joint.twistLock == ArticulationDofLock.LockedMotion)
         {
-            targetDeg = Mathf.Clamp(targetDeg, drive.lowerLimit, drive.upperLimit);
+            return false;
+        }
+
+        if (joint.twistLock == ArticulationDofLock.LimitedMotion)
+        {
+            int index = GetJointIndex(joint);
+            float min = GetMappingMin(index);
+            float max = GetMappingMax(index);
+            min = Mathf.Max(min, drive.lowerLimit);
+            max = Mathf.Min(max, drive.upperLimit);
+            if (min > max)
+            {
+                return false;
+            }
+            targetDeg = Mathf.Clamp(targetDeg, min, max);
         }
 
         drive.target = targetDeg;
         joint.xDrive = drive;
+        return true;
+    }
+
+    private float GetMappingMin(int index)
+    {
+        switch (index)
+        {
+            case 0: return j1Min;
+            case 1: return j2Min;
+            case 2: return j3Min;
+            case 3: return j4Min;
+            case 4: return j5Min;
+            case 5: return j6Min;
+            default: return float.NegativeInfinity;
+        }
+    }
+
+    private float GetMappingMax(int index)
+    {
+        switch (index)
+        {
+            case 0: return j1Max;
+            case 1: return j2Max;
+            case 2: return j3Max;
+            case 3: return j4Max;
+            case 4: return j5Max;
+            case 5: return j6Max;
+            default: return float.PositiveInfinity;
+        }
+    }
+
+    private static bool IsFinite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
+    private static bool IsFinite(Vector3 value) => IsFinite(value.x) && IsFinite(value.y) && IsFinite(value.z);
+
+    private void OnDisable()
+    {
+        hasAppliedTargets = false;
+        hasValidPose = false;
     }
 
     private void ConfigureJointDrive(ArticulationBody joint)
@@ -391,7 +503,7 @@ public class UpperArmToUrdfRobotJoints : MonoBehaviour
             warnedJoints[jointIndex] = true;
         }
 
-        Debug.LogWarning($"{nameof(UpperArmToUrdfRobotJoints)} expected a movable ArticulationBody, but '{joint.name}' is {joint.jointType}. Assign the ArticulationBody on the link that represents the revolute joint.", joint);
+        Debug.LogWarning($"{nameof(UpperArmToUrdfRobotJoints)} requires a revolute ArticulationBody for degree commands, but '{joint.name}' is {joint.jointType}.", joint);
     }
 
     [ContextMenu("Log Joint Diagnostics")]
@@ -451,6 +563,8 @@ public class UpperArmToUrdfRobotJoints : MonoBehaviour
     [ContextMenu("Calibrate Upper Arm")]
     public void Calibrate()
     {
+        hasAppliedTargets = false;
+        isCalibrated = false;
         if (!hasValidBones)
         {
             hasValidBones = TryInitializeBones();
@@ -458,6 +572,14 @@ public class UpperArmToUrdfRobotJoints : MonoBehaviour
             {
                 return;
             }
+        }
+
+        hasValidPose = UpdateArmAngles();
+        if (!hasValidPose)
+        {
+            isCalibrated = false;
+            Debug.LogWarning($"{nameof(UpperArmToUrdfRobotJoints)} cannot calibrate an invalid arm pose.", this);
+            return;
         }
 
         baseYaw = rawYaw;

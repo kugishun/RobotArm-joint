@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ロボットアーム開発タスク</title>
+<style>
+:root{color-scheme:light;--ink:#172b3a;--muted:#5d6f7c;--line:#dce4e8;--accent:#126e68}*{box-sizing:border-box}body{margin:0;background:#f3f6f8;color:var(--ink);font:15px/1.7 system-ui,"Yu Gothic",sans-serif}main{max-width:1150px;margin:auto;padding:36px 24px}header p{color:var(--muted);margin:8px 0}.eyebrow{font-size:12px;font-weight:700;letter-spacing:.12em;color:var(--accent)}h1{font-size:30px;margin:6px 0}h2{font-size:18px;margin:0}button,select,input{font:inherit}button,select{min-height:40px;border:1px solid #b9c9d2;border-radius:8px;background:white;padding:6px 12px;color:var(--ink)}button{cursor:pointer}button:hover{background:#e9f3f1}:focus-visible{outline:3px solid #168e82;outline-offset:3px}.overview{display:flex;gap:24px;align-items:center;background:#fff;padding:22px;border-radius:12px;margin:24px 0}.overview strong{font-size:28px}.bar-wrap{flex:1}.bar{height:9px;background:#e4ebee;border-radius:20px;overflow:hidden}.bar span{display:block;height:100%;background:var(--accent);transition:width .2s}.small{font-size:13px;color:var(--muted)}.roadmap{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px}.stage{border-top:3px solid #bdd1d0;padding-top:8px}.stage b{display:block}.toolbar{display:flex;gap:12px;flex-wrap:wrap;align-items:end;margin-bottom:20px}.toolbar label{display:grid;gap:3px;font-size:13px}.toolbar input{min-height:40px;border:1px solid #b9c9d2;border-radius:8px;padding:6px 10px;width:230px}.toolbar .spacer{flex:1}.group{margin:24px 0}.group-heading{display:flex;align-items:center;gap:12px;margin-bottom:12px}.cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.task{background:#fff;border:1px solid var(--line);border-radius:10px;padding:18px;display:grid;gap:10px}.task-top{display:flex;gap:10px;align-items:start}.task h3{font-size:16px;margin:0;flex:1}.id{color:#637888;font-size:12px;white-space:nowrap;padding-top:3px}.task p{margin:0;font-size:14px}.task footer{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}.tag{font-size:12px;border-radius:4px;padding:2px 7px;background:#edf2f5}.priority0{background:#fff0ec;color:#a83e27}.priority1{background:#fff4da;color:#866013}.done{opacity:.72;border-color:#97c7bb}.done h3{text-decoration:line-through}.blocked{border-left:4px solid #cf765b}#empty{padding:30px;text-align:center}.notice{padding:12px 0;border-top:1px solid var(--line);color:var(--muted);font-size:13px}.actions{display:flex;gap:8px;flex-wrap:wrap}@media(max-width:700px){main{padding:22px 14px}h1{font-size:24px}.cards{grid-template-columns:1fr}.roadmap{grid-template-columns:1fr 1fr}.overview{gap:16px}.toolbar input{width:100%}.toolbar label{flex:1;min-width:130px}.toolbar .spacer{display:none}}@media print{.toolbar,.actions,select{display:none}.cards{grid-template-columns:1fr}.task{break-inside:avoid}body{background:white}}
+</style>
+</head>
+<body><main>
+<header><div class="eyebrow">MYCOBOT / DEVELOPMENT BOARD</div><h1>手先追従を検証する開発タスク</h1><p>右手の位置・向きをロボット手先へ反映し、校正・精度・復帰動作を検証する。グリッパー開閉と把持試験は後回し。</p><p class="small">基準日：2026-10-07 ｜ IK・選択メニューは実装済み／コンパイル成功。Editor内のIK幾何検証は成功。マーカー移動・回転への手先の基本追従をユーザー確認済み。指定3姿勢の修正後に動作改善をユーザー確認済み。最新コードの静的コンパイル成功。定量精度・最新のUnity内テストは未確認。</p></header>
+<section class="overview" aria-label="残タスクの進捗"><div><strong id="count">0 / 20</strong><div class="small">残タスクの完了数</div></div><div class="bar-wrap"><div class="bar" role="progressbar" aria-label="タスク完了率" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progress"><span id="fill"></span></div><div class="small" id="summary" aria-live="polite"></div></div></section>
+<div class="roadmap"><div class="stage"><b>01　実行環境・回帰確認</b><span class="small">Unity起動／テスト／既存A</span></div><div class="stage"><b>02　IK追従を成立</b><span class="small">3姿勢校正／追従点／精度</span></div><div class="stage"><b>03　停止処理・実機</b><span class="small">入力途絶／復帰／低速実機</span></div><div class="stage"><b>04　評価・研究</b><span class="small">ログ／改善課題の選定</span></div></div>
+<div class="toolbar"><label>検索<input id="search" type="search" placeholder="例：校正、把持、UDP"></label><label>優先度<select id="priority"><option value="all">すべて</option><option value="0">最優先</option><option value="1">高</option><option value="2">中</option><option value="3">後続</option></select></label><label>状態<select id="status"><option value="all">すべて</option><option value="todo">未着手</option><option value="doing">作業中</option><option value="blocked">ブロック中</option><option value="done">完了</option><option value="deferred">後回し</option></select></label><div class="spacer"></div><button id="export">進捗を書き出す</button><button id="reset">初期状態に戻す</button></div>
+<div id="board"></div><p id="empty" hidden>条件に一致するタスクはありません。</p>
+<div class="notice"><p id="storage">変更はこのブラウザに自動保存されます。別のブラウザや端末とは同期されません。</p><p>完了判定は手動です。チェックしてもUnityのテストや実機操作は実行されません。A/B比較は必須タスクに含めていません。</p><a href="ik_control_menu_2026-09-26.md">実装・検証状況の記録（Markdown）</a></div>
+</main>
+<script>
+'use strict';
+const tasks=[
+['T01',0,0,'Unityのライセンス問題を解消','EditorでPlayと検証テストを実行できる。','Editor内で検証実行に成功（ユーザー確認）。コマンド実行は別途確認。','done'],
+['T02',0,0,'IKの幾何テストを実行','到達・姿勢・関節制限・回転境界のテストが通る。','ユーザーの実行ログで IK geometry validation passed. を確認。','done'],
+['T03',0,0,'起動メニューと切替を確認','選択待ちで指令せず、A/Bが競合せず、切替後に再校正できる。','UDP OFFで選択→校正→方式切替を確認。','todo'],
+['T04',0,0,'既存Aの動作を確認','メニューからAを選び、従来どおり操作できる。','既存マッピングの回帰確認。','todo'],
+['T05',1,1,'マーカーの位置への基本追従を確認','マーカーの移動に対して手先が追従する。','ユーザーによるPlay動作確認済み。mocopi入力・定量精度は別途確認。','done'],
+['T06',1,1,'マーカーの姿勢への基本追従を確認','マーカーの回転に対して手先が追従する。','ユーザーによるPlay動作確認済み。回転時の位置ずれ・姿勢誤差は別途測定。','done'],
+['T07',1,1,'追従点と評価基準を確定','フランジまたは工具先端のどの点を評価するか決め、ACTUAL・TARGETと一致する。','当面フランジで評価可能。工具先端を使う場合はTCPを設定。開閉制御とは独立。','todo'],
+['T08',1,1,'到達不能・特異姿勢への対応','無理な目標で不安定にならず、作業範囲に戻すと操作を再開できる。','関節制限・収束・復帰を確認。','todo'],
+['T09',1,2,'入力途絶・停止処理を整える','mocopi受信停止を検出し、Unity・実機の停止動作を確認できる。','送信停止と実機停止は別。実機試験前に対応。','todo'],
+['T10',2,2,'グリッパ開閉操作を追加','意図したタイミングで開閉できる。','ユーザー指定により後回し。現在の追従検証には含めない。','deferred'],
+['T11',2,2,'実機との対応を確認','関節順序・符号・範囲・工具位置が一致し、低速で追従できる。','Unity検証とT09の後にUDPを使用。','todo'],
+['T12',2,2,'把持タスクを検証','接近→向き調整→把持→持ち上げ→配置を実行できる。','グリッパー実装後に再開。T07・T10・T11の後。','deferred'],
+['T13',1,3,'評価ログを追加','目標・実手先の位置と向き、関節角、時刻、校正情報、IK収束結果を記録できる。','T16の測定前に導入。現段階では追従誤差・収束時間・失敗率を評価。','todo'],
+['T14',3,3,'研究課題と比較条件を決める','実際に残った問題から、改善手法と比較対象を選べる。','A/B比較に固定しない。タスク結果とログを活用。','todo']
+];
+tasks.push(['T15',2,0,'コマンドからの自動検証を再確認','batchmodeで検証を完走し、成功ログを確認できる。','Editor内の成功とは区別。起動中のEditorと同じプロジェクトを同時に開かない。','todo']);
+tasks.push(['T16',1,1,'位置・姿勢の追従精度を測定','既知の目標への位置・姿勢誤差と収束時間を記録し、操作目的に応じて決めた許容値と比較できる。','基本追従は確認済み。回転時の位置ずれも測る。','todo']);
+tasks.push(['T17',1,1,'mocopi入力での追従を確認','校正・座標変換・移動倍率を含め、人の手の移動と回転が意図した手先動作になる。','指定3姿勢の修正後に動作改善をユーザー確認済み。繰り返し校正・ノイズ・遅延・中間姿勢の検証は残る。','doing']);
+tasks.push(['T18',1,1,'追従点の可視化を確認','ACTUAL・TARGET・HAND INPUTの表示が対象点と一致し、校正後の動作を見分けられる。','表示を実装・コンパイル済み。Game/Sceneでの視認性は確認待ち。','doing']);
+tasks.push(['T19',1,1,'Aと共通の開始姿勢を確認','IK選択後にAの基準姿勢へ移動・停止し、その後に校正・追従できる。','校正ボタンが有効にならないとの報告あり。停止待ちの診断表示と現在姿勢からの復帰操作を追加。原因・Play再確認待ち。','doing']);
+tasks.push(['T20',1,1,'3姿勢登録の入力検査を確認','上・前・右の重複や近すぎる登録を拒否し、登録し直せる。','現在は3点対応のマッピング。3次元全域の最大可動範囲や衝突回避は保証しない。','doing']);
+tasks.push(['T21',1,1,'neutralと現在姿勢の比較表示を確認','範囲校正後に登録したneutralと現在姿勢、位置差・回転差を確認できる。','5cm・10度の復帰判定と球表示を撤去。差分は参考表示。静的コンパイル成功。Playでの一連の動作確認は残る。','doing']);
+tasks.push(['T22',1,1,'範囲校正後のneutral設定と追従開始を確認','3姿勢登録後に現在の手をneutralとして記録し、ボタンから追従を開始できる。','以前の姿勢への復帰は不要。3点の位置対応は維持し、neutralは比較表示に使用。開始直後の移動も確認。範囲計算・入力・ロボット側の条件でボタンを有効化。静的コンパイル成功。Playでの一連の動作確認は残る。','doing']);
+tasks.push(['T23',1,1,'指定3姿勢との対応を検証','上=[0,0,0,90,90,0]、前=[0,-90,0,90,90,0]、右=[-90,-90,0,90,90,0]から計算した手先へ対応する。','J2訂正後の動作改善をユーザー確認済み。中間姿勢・精度・開始時の移動は引き続き検証。次は最新の幾何・3点マッピングテスト再実行、追従点の確定、ログと定量測定。','doing']);
+const stages=['実行環境・回帰確認','IK追従を成立','停止処理・実機','評価・研究'];
+const priorities=['最優先','高','中','後続'];
+const states={todo:'未着手',doing:'作業中',blocked:'ブロック中',done:'完了',deferred:'後回し'};
+const key='mycobot-task-board-v1';
+let saved={};let persistent=true;
+try{saved=JSON.parse(localStorage.getItem(key)||'{}');if(!saved||typeof saved!=='object')saved={};}catch{persistent=false;}
+let progress=Object.fromEntries(tasks.map(t=>[t[0],Object.hasOwn(states,saved[t[0]])?saved[t[0]]:t[6]]));
+// Apply newly confirmed results once, preserving unrelated browser edits.
+const revisionKey=key+'-revision';
+try {
+  if(localStorage.getItem(revisionKey)!=='pose-tracking-20261007') {
+    progress.T01='done'; progress.T02='done';
+    progress.T05='done'; progress.T06='done';
+    progress.T10='deferred'; progress.T12='deferred'; progress.T17='doing';
+    localStorage.setItem(key,JSON.stringify(progress));
+    localStorage.setItem(revisionKey,'pose-tracking-20261007');
+  }
+} catch { persistent=false; }
+const $=id=>document.getElementById(id);
+function save(){try{localStorage.setItem(key,JSON.stringify(progress));}catch{persistent=false;}$('storage').textContent=persistent?'変更はこのブラウザに自動保存されます。別のブラウザや端末とは同期されません。':'ブラウザ保存が利用できません。閉じる前に「進捗を書き出す」で保存してください。';}
+function el(tag,text,cls){const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(cls)node.className=cls;return node;}
+function render(){
+const active=tasks.filter(t=>progress[t[0]]!=='deferred');
+const done=tasks.filter(t=>progress[t[0]]==='done').length;
+$('count').textContent=`${done} / ${active.length}`;
+$('fill').style.width=`${done/Math.max(1,active.length)*100}%`;
+$('progress').setAttribute('aria-valuenow',Math.round(done/Math.max(1,active.length)*100));
+$('summary').textContent=`作業中 ${tasks.filter(t=>progress[t[0]]==='doing').length}件 ／ ブロック中 ${tasks.filter(t=>progress[t[0]]==='blocked').length}件 ／ 後回し ${tasks.filter(t=>progress[t[0]]==='deferred').length}件（完了率から除外）`;
+const query=$('search').value.trim().toLowerCase();
+const visible=tasks.filter(t=>($('priority').value==='all'||String(t[1])===$('priority').value)&&($('status').value==='all'||progress[t[0]]===$('status').value)&&t.slice(0,6).join(' ').toLowerCase().includes(query));
+$('board').replaceChildren();$('empty').hidden=visible.length>0;
+stages.forEach((stage,index)=>{
+const subset=visible.filter(t=>t[2]===index);if(!subset.length)return;
+const section=el('section',undefined,'group');const heading=el('div',undefined,'group-heading');heading.append(el('h2',`0${index+1}　${stage}`),el('span',`${subset.length}件`,'small'));section.append(heading);const cards=el('div',undefined,'cards');
+subset.forEach(t=>{const state=progress[t[0]];const card=el('article',undefined,`task ${state}`);const top=el('div',undefined,'task-top');top.append(el('span',t[0],'id'),el('h3',t[3]));card.append(top,el('p',`完了条件：${t[4]}`),el('p',t[5],'small'));const footer=el('footer');const select=el('select');select.setAttribute('aria-label',`${t[0]} ${t[3]}の状態`);Object.entries(states).forEach(([value,label])=>{const option=el('option',label);option.value=value;select.append(option);});select.value=state;select.addEventListener('change',()=>{progress[t[0]]=select.value;save();render();const replacement=document.querySelector(`select[aria-label="${select.getAttribute('aria-label')}"]`);if(replacement)replacement.focus();});footer.append(el('span',priorities[t[1]],`tag priority${t[1]}`),select);card.append(footer);cards.append(card);});section.append(cards);$('board').append(section);
+});
+}
+['search','priority','status'].forEach(id=>$(id).addEventListener(id==='search'?'input':'change',render));
+$('reset').addEventListener('click',()=>{if(!confirm('すべてのタスクを基準日の状態に戻しますか？'))return;progress=Object.fromEntries(tasks.map(t=>[t[0],t[6]]));save();render();});
+$('export').addEventListener('click',()=>{const data={exportedAt:new Date().toISOString(),tasks:tasks.map(t=>({id:t[0],title:t[3],stage:stages[t[2]],priority:priorities[t[1]],status:states[progress[t[0]]],completion:t[4]}))};const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=el('a');a.href=url;a.download='robot-arm-tasks.json';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);});
+render();if(!persistent)$('storage').textContent='保存済み進捗を読み込めませんでした。進捗は書き出して保存できます。';
+</script></body></html>
+
+
+
+
+
+

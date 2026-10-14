@@ -1,5 +1,7 @@
 # `UpperArmToUrdfRobotJoints.cs` 解説
 
+2026-09-23更新：検証結果と未解決の設計課題は `Docs/mapping_a_validation_2026-09-23.md` を参照してください。現在の特徴量は解剖学的な6関節角ではありません。
+
 このドキュメントは、`Assets/Scripts/UpperArmToUrdfRobotJoints.cs` が何をしているか、Unity Inspector で何を設定する必要があるか、動作確認時にどこを見るべきかを説明します。
 
 ## 目的
@@ -47,7 +49,8 @@
 このスクリプトが動かせる関節タイプは以下です。
 
 - `RevoluteJoint`
-- `PrismaticJoint`
+
+度を指令するため、直動関節 `PrismaticJoint` は対象外です。
 
 それ以外の関節タイプが設定されている場合、警告を1回だけ出して、その関節は動かしません。
 
@@ -83,7 +86,7 @@ J1-J5 は初期値で `-165` から `165` 度、J6 は `-180` から `180` 度�
 
 上腕や前腕の水平成分が小さすぎる場合、yaw を再計算せず、前回値を使います。これにより、腕を真上・真下に近づけたときの角度ジャンプを避けます。
 
-`smoothing` はロボット関節角の補間率です。
+`smoothing` は60 Hz基準の補間率です。実際には `1 - (1 - smoothing)^(60 * deltaTime)` へ変換し、フレームレートによる応答差を抑えます。
 
 - `0` に近いほど動きが遅く滑らか
 - `1` に近いほど入力に即追従
@@ -106,7 +109,7 @@ J1-J5 は初期値で `-165` から `165` 度、J6 は `-180` から `180` 度�
 
 `driveOnlyAfterCalibration` が有効な場合、キャリブレーションが終わるまでロボット関節を動かしません。
 
-キャリブレーションでは、現在の右腕姿勢を基準値として保存します。
+キャリブレーションでは、呼び出し時点の右腕姿勢を読み直して保存し、無効な姿勢を拒否します。通常の角度計算・関節反映はLateUpdate、UDP送信はその後のLateUpdateで行います。
 
 - `baseYaw`
 - `basePitch`
@@ -208,7 +211,7 @@ rawHandRoll = NormalizeAngle(handEuler.z);
 ```csharp
 deltaYaw = Mathf.DeltaAngle(baseYaw, rawYaw);
 deltaPitch = rawPitch - basePitch;
-deltaElbow = rawElbow - baseElbow;
+deltaElbow = Mathf.DeltaAngle(baseElbow, rawElbow);
 deltaForearmYaw = Mathf.DeltaAngle(baseForearmYaw, rawForearmYaw);
 deltaHandPitch = Mathf.DeltaAngle(baseHandPitch, rawHandPitch);
 deltaHandRoll = Mathf.DeltaAngle(baseHandRoll, rawHandRoll);
@@ -234,19 +237,14 @@ drive.target = targetDeg;
 joint.xDrive = drive;
 ```
 
-Drive に lower / upper limit が設定されている場合は、その範囲にも収めます。
-
-```csharp
-if (drive.lowerLimit < drive.upperLimit)
-{
-    targetDeg = Mathf.Clamp(targetDeg, drive.lowerLimit, drive.upperLimit);
-}
-```
+twist軸がLimitedMotionの場合、スクリプト範囲とDriveのlower / upper limitの共通範囲へ制限します。上下限が等しい場合もその値へ制限し、共通範囲がない場合は適用しません。LockedMotionでは適用しません。
 
 つまり、最終的な角度制限は2段階あります。
 
 1. スクリプト側の `jNMin` / `jNMax`
 2. `ArticulationBody.xDrive` 側の lower / upper limit
+
+制限後の最終指令を `ref` 引数で平滑化状態へ戻すため、適用成功後は外部取得する指令角もDrive targetと一致します。これは指令値であり、実際の関節位置ではありません。
 
 ## 外部から取得できる値
 
@@ -280,6 +278,8 @@ if (drive.lowerLimit < drive.upperLimit)
 
 `MyCobotUdpJointSender.cs` などから使うため、以下の method が用意されています。
 
+送信側は `CanSendJointTargets` を確認します。校正済み・有効姿勢・全6軸の適用成功・ソース有効が必要です。受信途絶の検出とは別で、古いmocopi姿勢の鮮度はこのプロパティでは判定しません。
+
 ```csharp
 public float[] GetRobotJoints()
 ```
@@ -305,7 +305,7 @@ public Vector2 GetRobotJ1J2()
 ここで以下を確認します。
 
 - `joint1` から `joint6` が未設定でないか
-- 関節タイプが `RevoluteJoint` または `PrismaticJoint` か
+- 関節タイプが `RevoluteJoint` か
 - Drive limit が想定範囲か
 
 ### キャリブレーション
@@ -356,7 +356,7 @@ Humanoid Avatar のボーン割り当てが不完全です。FBX の Rig 設定�
 以下を確認します。
 
 - `joint1` から `joint6` に正しい `ArticulationBody` が設定されているか
-- 設定した `ArticulationBody` が `RevoluteJoint` または `PrismaticJoint` か
+- 設定した `ArticulationBody` が `RevoluteJoint` か
 - `driveOnlyAfterCalibration` が有効で、まだキャリブレーション前ではないか
 - `xDrive` の lower / upper limit が狭すぎないか
 - `driveForceLimit` が小さすぎないか
@@ -371,11 +371,13 @@ Humanoid Avatar のボーン割り当てが不完全です。FBX の Rig 設定�
 
 J3/J4/J5 がワールド座標の角度を直接使うと、腕全体を左右へ振っただけでも以下の成分が混ざります。
 
-- J3: 3D 空間上の単純な `Vector3.Angle()` では、肘曲げ以外の横方向成分も角度に入る
+- J3: 投影角と3次元曲げ角は異なる。3次元の `Vector3.Angle()` 自体は、腕全体を同じ回転で動かしても変化しない
 - J4: 前腕のワールド yaw では、肩・上腕の yaw と前腕の相対 yaw を分離できない
 - J5: 右手のワールド Euler X は、体の向きや腕 yaw によって pitch/roll の分解結果が変わる
 
 現在の実装では、J3 は上腕 yaw に沿う垂直平面上の符号付き角度、J4 は上腕 yaw に対する前腕 yaw、J5/J6 は前腕 yaw を取り除いた手首回転から計算します。
+
+これでもJ4は垂直を跨ぐ肘屈曲に干渉し、J5/J6には前腕pitch/rollが残ります。yawしきい値や平滑化だけで独立した関節操作になるわけではありません。
 
 ## このスクリプトの位置づけ
 

@@ -5,6 +5,7 @@ using System.Net.Sockets;
 using System.Text;
 using UnityEngine;
 
+[DefaultExecutionOrder(100)]
 public class MyCobotUdpJointSender : MonoBehaviour
 {
     [Header("Joint Source")]
@@ -27,6 +28,14 @@ public class MyCobotUdpJointSender : MonoBehaviour
     [SerializeField] private float logIntervalSeconds = 0.5f;
 
     private UdpClient udpClient;
+    private HandPoseIkController ikSource;
+    public bool MenuAllowsSending { get; set; } = true;
+    public void SelectIkSource(HandPoseIkController source) => ikSource = source;
+    public bool UsesSource(UpperArmToUrdfRobotJoints source)
+    {
+        ResolveJointSource();
+        return jointSource == source;
+    }
     private IPEndPoint remoteEndPoint;
     private float sendTimer;
     private float lastLogTime = float.NegativeInfinity;
@@ -47,7 +56,7 @@ public class MyCobotUdpJointSender : MonoBehaviour
         }
     }
 
-    private void Update()
+    private void LateUpdate()
     {
         if (!sendContinuously)
         {
@@ -90,11 +99,18 @@ public class MyCobotUdpJointSender : MonoBehaviour
     [ContextMenu("Send Now")]
     public void SendNow()
     {
+        if (!isActiveAndEnabled || !MenuAllowsSending) return;
         ResolveJointSource();
 
         if (jointSource == null)
         {
             Debug.LogWarning($"{nameof(MyCobotUdpJointSender)} requires a {nameof(UpperArmToUrdfRobotJoints)} source.", this);
+            return;
+        }
+
+        // Never publish startup, invalid-pose, disabled-source or unapplied targets.
+        if (ikSource != null ? !ikSource.CanSendJointTargets : !jointSource.CanSendJointTargets)
+        {
             return;
         }
 
@@ -108,7 +124,7 @@ public class MyCobotUdpJointSender : MonoBehaviour
             return;
         }
 
-        float[] angles = jointSource.GetRobotJoints();
+        float[] angles = ikSource != null ? ikSource.GetRobotJoints() : jointSource.GetRobotJoints();
         if (!HasValidValues(angles) || (includeGripper && !HasValidValues(gripperValues)))
         {
             Debug.LogWarning($"{nameof(MyCobotUdpJointSender)} skipped UDP send because payload contains NaN or Infinity.", this);
